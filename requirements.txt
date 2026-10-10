@@ -1,0 +1,2 @@
+# Core pipeline uses only the Python standard library (sqlite3, csv, re, ...).
+pytest>=7.4
