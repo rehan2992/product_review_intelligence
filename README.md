@@ -1,132 +1,449 @@
 # Product Review Intelligence
 
-Ingest product reviews, clean them, score **sentiment + topic with confidence**, publish **SQL-ready aggregates**,
-and **detect sudden sentiment changes (drift)**. Python + SQL, synthetic data only, runs from a clean setup with no
-downloads and no secrets.
+A Python and SQL pipeline for ingesting product reviews, cleaning messy data, performing sentiment and topic analysis with confidence scores, publishing SQL-ready aggregates, and detecting sudden sentiment drift.
 
-## 1. Problem statement
-Reviews arrive as messy CSV batches (duplicates, bad ratings/dates, HTML, empty text, non-English text).
-We need trustworthy sentiment/topic data with a confidence score, aggregates analysts can query, and an alert when
-a product's sentiment changes suddenly (e.g. after a bad firmware update).
+The project uses synthetic review data and a reproducible SQLite pipeline. The default rule-based backend runs without downloading an ML model or requiring API secrets.
 
-## 2. Approach
-1. **Ingest** CSV batches into an untouched RAW layer (incremental, hash-checked, schema-checked).
-2. **Clean**: Python validates/normalises each row, SQL dedupes and upserts; every rejected row keeps a reason.
-3. **Enrich** with an AI model behind a `SentimentModel` interface: label + confidence, plus a topic.
-   Low confidence goes to a review queue; failures retry, then fall back.
-4. **Aggregate** with SQL views (daily, rolling 7-day, topic x sentiment, queues).
-5. **Monitor drift**: last 7 days vs the prior 28 days per product, written to `drift_alerts`.
+GitHub Repository: https://github.com/rehan2992/product_review_intelligence
 
-## 3. Architecture / data flow
-See [docs/architecture.md](docs/architecture.md) (Mermaid diagram) and [docs/design_note.md](docs/design_note.md).
+## 1. Problem Statement
 
+Product reviews often contain duplicate records, invalid ratings and dates, HTML, missing text, and unsupported languages. These issues make it difficult to derive reliable insights about customer sentiment and product quality.
+
+This project addresses these challenges by building a pipeline that:
+
+- Ingests and validates CSV review batches.
+- Cleans and deduplicates review records.
+- Predicts sentiment and identifies review topics.
+- Assigns confidence scores and routes uncertain predictions for review.
+- Stores structured data in SQLite and publishes SQL-ready aggregates.
+- Detects significant changes in product sentiment and topic distributions.
+
+## 2. Solution Overview
+
+The pipeline consists of five main stages:
+
+1. Ingestion: Loads CSV batches into an immutable raw layer, validates schemas, and tracks file hashes.
+2. Cleaning: Normalizes review data, validates ratings and dates, removes duplicates, and records rejection reasons.
+3. AI Enrichment: Predicts sentiment, confidence, and topic using a configurable model interface.
+4. Aggregation: Generates SQL views for daily sentiment, rolling sentiment trends, topic analysis, and review queues.
+5. Drift Detection: Compares recent review patterns with historical baselines and stores detected alerts in `drift_alerts`.
+
+## 3. Architecture and Data Flow
+
+See [docs/architecture.md](docs/architecture.md) for the architecture diagram and [docs/design_note.md](docs/design_note.md) for design decisions.
+
+```text
+CSV Batches
+    |
+    v
+Ingestion and Schema Validation
+    |
+    v
+raw_reviews + ingestion_log
+    |
+    v
+Cleaning and Deduplication
+    |
+    +----------------------> rejected_reviews
+    |
+    v
+clean_reviews
+    |
+    v
+Sentiment and Topic Enrichment
+    |
+    v
+review_predictions
+    |
+    v
+SQL Aggregation Views
+    |
+    +----------------------> CSV Exports
+    |
+    v
+Drift Detection
+    |
+    v
+drift_alerts
 ```
-CSV --ingest--> raw_reviews --clean--> clean_reviews (+ rejected_reviews) --enrich(AI)--> review_predictions
-                                                                                              |
-                          drift_alerts <--drift checks-- SQL views (aggregates) <-------------+
+
+## 4. Technology Stack
+
+- Language: Python 3.10+
+- Database: SQLite
+- Data Processing: Python standard library (`csv`, `sqlite3`)
+- Query and Analytics: SQL views, window functions, and upserts
+- Testing: pytest
+- Optional ML Backend: Hugging Face Transformers and PyTorch
+- Model: DistilBERT fine-tuned on SST-2 for binary sentiment classification
+
+The default rule-based backend does not require downloading model weights. The optional Hugging Face backend downloads the model on first use.
+
+## 5. Project Structure
+
+```text
+product_review_intelligence/
+├── README.md
+├── requirements.txt
+├── requirements-hf.txt
+├── Makefile
+├── pytest.ini
+├── .env.example
+├── .gitignore
+├── data/
+│   └── sample/
+│       ├── batch_1.csv
+│       └── batch_2.csv
+├── docs/
+│   ├── architecture.md
+│   └── design_note.md
+├── sql/
+│   ├── 01_create_tables.sql
+│   ├── 02_clean_reviews.sql
+│   ├── 03_aggregates.sql
+│   └── 04_drift_checks.sql
+├── src/
+│   ├── generate_data.py
+│   ├── ingest.py
+│   ├── clean.py
+│   ├── enrich.py
+│   ├── aggregate.py
+│   ├── drift.py
+│   ├── pipeline.py
+│   ├── config.py
+│   ├── db.py
+│   └── ai/
+│       ├── base.py
+│       ├── rule_model.py
+│       ├── hf_model.py
+│       └── topics.py
+├── tests/
+│   ├── conftest.py
+│   ├── test_ai.py
+│   ├── test_cleaning.py
+│   ├── test_dedup_idempotency.py
+│   └── test_pipeline_drift.py
+└── scripts/
+    └── drift_sweep.py
 ```
 
-## 4. Technologies
-Python 3.10+ (stdlib: `sqlite3`, `csv`), SQLite (window functions, `ON CONFLICT` upserts), pytest.
-Optional: Hugging Face `transformers` + `torch` for the DistilBERT SST-2 backend. The default pipeline needs no model download; the optional HF backend downloads its model on first use.
+## 6. Installation and Setup
 
-## 5. Project structure
-```
-README.md  requirements.txt  requirements-hf.txt  Makefile  pytest.ini  .env.example  .gitignore
-data/sample/        batch_1.csv, batch_2.csv   (synthetic, committed, reproducible)
-sql/                01_create_tables  02_clean_reviews  03_aggregates  04_drift_checks
-src/                generate_data  ingest  clean  enrich  aggregate  drift  pipeline  config  db
-src/ai/             base (interface)  rule_model  hf_model  topics
-tests/              cleaning, dedupe/idempotency/schema, AI failures, end-to-end drift
-scripts/            drift_sweep.py  (measures drift detection/false-alarm rates)
-docs/               architecture.md  design_note.md
+### Prerequisites
+
+- Python 3.10 or newer
+- Git
+- Internet access to clone the repository and install dependencies
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/rehan2992/product_review_intelligence.git
+cd product_review_intelligence
+
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install -r requirements.txt
 ```
 
-## 6. Setup and run
+If PowerShell blocks virtual-environment activation, use the environment's Python executable directly:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### macOS / Linux
+
 ```bash
-git clone <your-repo-url> && cd product-review-intelligence
-python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+git clone https://github.com/rehan2992/product_review_intelligence.git
+cd product_review_intelligence
 
-python -m src.generate_data        # optional: regenerate data/sample (deterministic, seed 42)
-python -m src.pipeline --reset     # run everything on data/sample/*.csv
-python -m pytest -q                # 18 tests
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install -r requirements.txt
 ```
-Incremental demo (batch 2 overlaps batch 1 and contains edited reviews):
+
+## 7. Running the Pipeline
+
+### Run the complete pipeline
+
+```bash
+python -m src.pipeline --reset
+```
+
+This command processes the sample CSV batches, updates the database, generates aggregates, runs drift checks, and exports the results.
+
+Note: `--reset` resets pipeline state before processing. Use it for a clean demonstration, not when you need to preserve existing database state.
+
+### Run the tests
+
+```bash
+python -m pytest -v
+```
+
+The project contains "18 tests" covering cleaning, deduplication, idempotency, model failures, confidence handling, and drift detection.
+
+The tests use fake models and temporary databases, so they do not require downloading an ML model.
+
+### Demonstrate incremental ingestion
+
 ```bash
 python -m src.pipeline --reset --files batch_1.csv
 python -m src.pipeline --files batch_2.csv
-python -m src.pipeline --files batch_1.csv batch_2.csv     # nothing changes (idempotent)
+python -m src.pipeline --files batch_1.csv batch_2.csv
 ```
-Optional real model: `pip install -r requirements-hf.txt && python -m src.pipeline --reset --backend hf`
-(if the model cannot load, the pipeline falls back to the rule model and records that in `model_name`).
-Config: copy `.env.example` to `.env` (all optional). No secrets are needed or committed.
 
-Outputs: SQLite DB `data/reviews.db` (git-ignored); `output/*.csv` (one per view) and `output/drift_report.md`.
-Try: `sqlite3 data/reviews.db "select * from product_summary;"`
+Batch 2 overlaps with batch 1 and includes edited reviews. Reprocessing the same batches demonstrates idempotency.
 
-## 7. Data model
-| Table | Key columns |
+### Regenerate synthetic data (optional)
+
+```bash
+python -m src.generate_data
+```
+
+The generator uses seed 42 for reproducible sample data.
+
+## 8. Optional Hugging Face Backend
+
+To run the pipeline with the DistilBERT SST-2 sentiment model, install the optional dependencies:
+
+```bash
+python -m pip install -r requirements-hf.txt
+python -m src.pipeline --reset --backend hf
+```
+
+The first run downloads the model weights and may take longer than the default pipeline.
+
+If the Hugging Face model cannot be loaded or fails during inference, the pipeline is designed to retry and use the rule-based fallback. If both models fail, the prediction is recorded as failed.
+
+## 9. AI Enrichment Design
+
+### Input
+
+The enrichment layer receives cleaned review text and truncates it to a maximum of 2,000 characters. The Hugging Face backend also applies its model token limit.
+
+### Sentiment Output
+
+The pipeline supports two sentiment backends:
+
+| Feature | Rule-based backend | Hugging Face backend |
+|---|---|---|
+| Sentiment labels | Positive, negative, neutral | Positive, negative |
+| Confidence | Score between 0 and 1 | Model score between 0 and 1 |
+| Model download | Not required | Required on first use |
+| Neutral class | Supported | Not supported as a true class |
+
+The default backend uses a lexicon-based scorer with negation and intensifier handling. Its confidence moves toward 0.5 when sentiment cues are missing or conflicting.
+
+The optional DistilBERT SST-2 model is binary. It does not generate a true neutral label.
+
+### Topic Classification
+
+A keyword-based classifier assigns one of these topics:
+
+- `delivery`
+- `quality`
+- `price`
+- `support`
+- `battery`
+- `other`
+
+A topic score represents the classifier's hit-share score.
+
+### Confidence and Failure Handling
+
+- Predictions with confidence below `0.65` are routed to `low_confidence_queue`.
+- Their final sentiment label is `uncertain`, while the raw prediction is retained.
+- Empty or too-short text, text without alphabetic characters, and text whose alphabetic characters are mostly non-ASCII are rejected before model inference.
+- Model errors trigger a retry followed by a rule-based fallback.
+- If both models fail, the prediction is recorded as failed.
+- Malformed model output is recorded with the reason `invalid_model_output`.
+
+**Language limitation:** The current input validation uses a character-script heuristic, not general language detection. The current model setup is intended for English reviews; non-English-script reviews are currently unsupported and recorded as failed predictions.
+
+## 10. Database Design
+
+The pipeline uses SQLite to persist raw, cleaned, enriched, and monitoring data.
+
+| Table | Purpose |
 |---|---|
-| `raw_reviews` | raw_id, review_id, product_id, user_id, rating, review_text, review_date (all TEXT), batch_id, cleaned_at |
-| `ingestion_log` | source_file, file_hash, status (loaded/failed), error |
-| `clean_reviews` | review_id PK, product_id, rating INT 1-5 or NULL, review_text, review_date ISO, text_hash |
-| `rejected_reviews` | raw row + `reject_reason` |
-| `review_predictions` | review_id, sentiment_label, raw_label, sentiment_score, topic, topic_score, model_name/version, status, reason |
-| `drift_alerts` | check_date, product_id, metric, baseline_value, current_value, threshold, severity, detail |
+| `raw_reviews` | Stores ingested review records before cleaning |
+| `ingestion_log` | Tracks source files, hashes, ingestion status, and errors |
+| `clean_reviews` | Stores validated and normalized reviews |
+| `rejected_reviews` | Stores rejected rows and their rejection reasons |
+| `review_predictions` | Stores sentiment, confidence, topic, model information, and prediction status |
+| `drift_alerts` | Stores detected drift events and their supporting metrics |
 
-Views: `daily_sentiment_by_product`, `rolling_7d_negative_share`, `topic_sentiment_summary`, `product_summary`,
-`low_confidence_queue`, `failed_predictions`, `rating_sentiment_disagreement`.
+### SQL Views
 
-## 8. AI approach
-* **Input:** cleaned review text, truncated to at most 2000 characters in the enrichment layer. The HF backend also tokenizes/truncates to its 512-token model limit.
-* **Output:** the default rule-based model supports `positive|negative|neutral` with a confidence in `[0, 1]`; the optional DistilBERT SST-2 model is binary (`positive|negative`) with a score in `[0, 1]`. The SST-2 backend does not produce a true neutral class.
-* **Topic:** keyword classifier (delivery, quality, price, support, battery, other) with a hit-share score.
-* **Default model:** lexicon scorer with negation/intensifier handling. Confidence falls toward 0.5 when cues are absent
-  or conflict (mixed reviews). **Optional:** DistilBERT SST-2.
-* **Bad outcomes:** confidence < 0.65 -> `low_confidence`, label `uncertain`, raw guess kept, listed in `low_confidence_queue`;
-  empty/too-short text, text with no letters, and text whose alphabetic characters are mostly non-ASCII -> `failed` before the model is called. This is a script heuristic, not general language detection; the current model setup is intended for English reviews. Model error -> retry once -> rule fallback -> `failed` if that also fails; malformed output -> `failed: invalid_model_output`.
+The project provides the following analytical views:
 
-## 9. Drift monitoring
-Per product, last 7 days vs previous 28 days: negative-share jump (>=15 pts and z >= 2.5), label-mix PSI (>= 0.2, plus chi-square
-significance), mean-confidence drop (>= 0.10), topic-share jump (>= 15 pts and z >= 4). Minimum sample sizes apply.
-The generator plants a drift: product **P03** goes from ~15% to ~55% negative in the last 7 days after a "firmware update".
+- `daily_sentiment_by_product`
+- `rolling_7d_negative_share`
+- `topic_sentiment_summary`
+- `product_summary`
+- `low_confidence_queue`
+- `failed_predictions`
+- `rating_sentiment_disagreement`
 
-## 10. Assumptions
-English reviews (non-English-script reviews are currently unsupported and recorded as failed predictions); one row = one review; `dd/mm/yyyy` is day-first; a missing rating is kept (NULL) but a present, invalid
-rating rejects the row; same text + same user + same product under a different id is a duplicate; latest delivery of a
-`review_id` wins; confidence threshold 0.65.
+These views make the processed data accessible for reporting and further analysis.
 
-## 11. Tests (18)
-`tests/test_cleaning.py` invalid rows rejected with reasons, normalisation, parsers.
-`tests/test_dedup_idempotency.py` duplicates/near-duplicates, re-run idempotency, overlapping + edited batch, **bad schema file**.
-`tests/test_ai.py` low-confidence routing, **model crash -> retry -> fallback**, **both models down**, **malformed output**, unsupported input.
-`tests/test_pipeline_drift.py` planted drift caught on P03 only, **no alerts on stable data**, schema checks, rerun does not duplicate alerts.
-Tests use a fake model (no downloads) and temp databases.
+## 11. Drift Detection
 
-## 12. Sample output (real run, seed 42)
-```
+The pipeline compares the most recent 7 days with the previous 28 days for each product.
+
+| Metric | Detection condition |
+|---|---|
+| Negative sentiment share | Increase of at least 15 percentage points and z-score of at least 2.5 |
+| Label distribution | Population Stability Index (PSI) of at least 0.2, with chi-square significance |
+| Mean confidence | Decrease of at least 0.10 |
+| Topic share | Increase of at least 15 percentage points and z-score of at least 4 |
+
+Minimum sample-size requirements apply.
+
+The synthetic data generator deliberately introduces a sentiment shift for product `P03`, simulating a negative response after a firmware update.
+
+The drift detector records alerts in `drift_alerts` and exports a human-readable report.
+
+## 12. Sample Results
+
+The following figures represent the default rule-based pipeline run with seed 42.
+
+```text
 clean   raw_processed=4390 clean_added=3736 rejected_added=654
 enrich  processed=3736 ok=3416 low_confidence=283 failed=37 fallback_batches=0
 drift   3 alert(s)
-   [HIGH] P03 negative_share: negative share 15.1% -> 57.1% (z=5.7, n=42 vs 159)
-   [HIGH] P03 label_psi: label mix shifted, PSI=0.97
-   [HIGH] P03 topic_share:battery: 'battery' mentions 14.5% -> 54.8% (z=5.5)
+
+[HIGH] P03 negative_share:
+negative share 15.1% -> 57.1% (z=5.7, n=42 vs 159)
+
+[HIGH] P03 label_psi:
+label mix shifted, PSI=0.97
+
+[HIGH] P03 topic_share:battery:
+battery mentions 14.5% -> 54.8% (z=5.5)
 ```
-Rejections: duplicate_review_id 426, near_duplicate 68, empty_text 65, invalid_rating 47, invalid_date 20,
-missing_product_id 14, future_date 14. Failed AI: 37 (non-English script).
-Rolling 7-day negative share for P03 (`rolling_7d_negative_share`): 0.22 (Sep 22) -> 0.32 (Sep 25) -> 0.57 (Sep 30).
-Threshold check (`python scripts/drift_sweep.py --seeds 40`): planted drift found 40/40; stable data raised an alert in 2/40 runs.
 
-## 13. Known limitations
-* Synthetic data and the lexicon share vocabulary, so sentiment accuracy here is optimistic; no labelled evaluation yet.
-* English only; no sarcasm handling; HF SST-2 is binary (ambiguity appears only as low score).
-* Fixed drift windows, no seasonality; with many product/topic tests a few false alarms are statistically expected.
-* The fallback retries the broken primary for every batch (no circuit breaker).
-* SQLite: single writer, whole-file DB.
+### Data Quality Summary
 
-## 14. What I would improve for production
-Postgres/warehouse + dbt models; Airflow/cron scheduling and Slack/PagerDuty alerts on `drift_alerts`; a labelled
-evaluation set and model monitoring (MLflow); circuit breaker and batching/queueing for model calls; human labelling
-loop fed by `low_confidence_queue`; multilingual model; seasonality-aware drift (e.g. STL residuals / CUSUM); data
-contracts and schema evolution; CI running the tests on every push.
+| Metric | Count |
+|---|---:|
+| Raw records processed | 4,390 |
+| Clean reviews added | 3,736 |
+| Rejected records | 654 |
+| Successful predictions | 3,416 |
+| Low-confidence predictions | 283 |
+| Failed predictions | 37 |
+| Drift alerts | 3 |
+
+The rejected records include duplicate review IDs, near-duplicates, empty text, invalid ratings, invalid dates, missing product IDs, and future dates.
+
+The 37 failed predictions in this run were due to unsupported non-English-script input.
+
+### Drift Detection Sweep
+
+The following result was obtained from the project's synthetic drift sweep:
+
+```text
+Command: python scripts/drift_sweep.py --seeds 40
+
+Planted drift detected: 40/40 runs
+Stable-data runs with an alert: 2/40
+```
+
+These are results from synthetic experiments, not measurements of production performance.
+
+## 13. Output Files
+
+After a pipeline run, the project generates:
+
+- `data/reviews.db` — SQLite database
+- `output/*.csv` — exported SQL-view results
+- `output/drift_report.md` — drift detection report
+
+The database and generated outputs are excluded from Git through `.gitignore`.
+
+To inspect the `product_summary` view, use a SQLite command-line client if installed:
+
+```bash
+sqlite3 data/reviews.db "SELECT * FROM product_summary;"
+```
+
+Alternatively, query the database using Python's built-in `sqlite3` module.
+
+## 14. Testing and Reliability
+
+The test suite covers:
+
+- Invalid input validation and rejection reasons
+- Text normalization and date parsing
+- Duplicate and near-duplicate handling
+- Incremental ingestion and idempotency
+- Bad CSV schema handling
+- Low-confidence prediction routing
+- Model crash, retry, and fallback behavior
+- Failure of both models
+- Malformed model output
+- Detection of planted drift
+- Stable-data false-alert checks
+- Database schema and duplicate-alert prevention
+
+Run all tests with:
+
+```bash
+python -m pytest -v
+```
+
+## 15. Assumptions
+
+- Sample reviews are synthetic.
+- The intended language is English.
+- One input row represents one review.
+- Dates in `dd/mm/yyyy` format are interpreted as day-first.
+- Missing ratings are retained as `NULL`; present but invalid ratings cause rejection.
+- Duplicate detection considers matching text, user, and product even when the review ID differs.
+- The latest delivery of a given `review_id` wins.
+- The confidence threshold is `0.65`.
+
+## 16. Known Limitations
+
+- Synthetic data and the rule-based sentiment lexicon share vocabulary, so observed performance may be optimistic.
+- There is no labelled real-world evaluation dataset yet.
+- Sarcasm and nuanced context are not handled reliably.
+- The optional SST-2 model is binary and does not provide a true neutral class.
+- Non-English-script reviews are currently unsupported.
+- Fixed drift windows do not account for seasonality.
+- Testing many products and topics can produce occasional false alerts.
+- The fallback mechanism does not yet use a circuit breaker.
+- SQLite is best suited to this project's scale and has a single-writer limitation.
+
+## 17. Future Improvements
+
+Potential production improvements include:
+
+- Moving to PostgreSQL or a data warehouse with dbt models.
+- Scheduling jobs with Airflow or cron.
+- Sending drift alerts through Slack or PagerDuty.
+- Building a labelled evaluation dataset and monitoring model performance.
+- Adding circuit breakers, batching, and inference queues.
+- Using `low_confidence_queue` for human review and feedback.
+- Adding multilingual sentiment support.
+- Using seasonality-aware drift detection, such as STL residuals or CUSUM.
+- Introducing stronger data contracts and schema evolution.
+- Running tests automatically in CI on every push.
+
+## 18. Reproducibility and Security
+
+- Sample input data is synthetic and committed to the repository.
+- The default pipeline requires no external model download.
+- No API secrets are required for the default run.
+- `.env` files, virtual environments, generated databases, caches, and pipeline outputs are excluded from Git.
+
+---
+
+Project: Product Review Intelligence  
+Stack: Python, SQL, SQLite, pytest, optional Hugging Face Transformers  
+Repository: https://github.com/rehan2992/product_review_intelligence
